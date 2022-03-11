@@ -1,0 +1,25 @@
+name: build-playground/begonaguereca/demo
+on:
+  push:
+    branches:
+    - build
+jobs:
+  Job:
+    runs-on: ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v2
+    - name: Run a one-line script
+      run: echo Hello, world!
+#     # This item has no matching transformer
+#     - task: GoTool@0
+#       inputs:
+#         version: '1.10'
+    - uses: Azure/login@v1
+      with:
+        creds: "${{ secrets.AZURE_CREDENTIALS }}"
+    # The Azure Function App does not accept glob patterns. Consider updating the package path.
+    - uses: Azure/functions-action@v1
+      with:
+        app-name: demo
+        package: "${{ github.workspace }}/**/*.zip"
