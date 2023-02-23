@@ -1,0 +1,28 @@
+name: build-playground/integration-tests/yaml/conditional_steps
+on:
+  workflow_dispatch:
+    inputs:
+      experimentalTemplate:
+        description: Use experimental build process?
+        default: false
+        type: boolean
+        required: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v3.3.0
+    - uses: begonaguereca/template/.github/actions/integration_tests_templates_simple_step
+      if: true == true && false == false
+#     # 'elseif' was not transformed because there is no suitable equivalent in GitHub Actions
+#     - task: composite_action
+#       inputs:
+#         path: "./templates/simple_step.yml"
+#         parameters:
+#       condition: elseif eq(parameters.experimentalTemplate, false)
+    - uses: begonaguereca/template/.github/actions/integration_tests_templates_simple_step
+      if: '"banannas" == "banannas" && !(true == true && false == false)'
+    - uses: begonaguereca/template/.github/actions/integration_tests_templates_simple_step
+      if: '"apples" == "apples" && (!(true == true && false == false) && !("banannas" == "banannas"))'
+    - uses: begonaguereca/template/.github/actions/integration_tests_templates_simple_step
