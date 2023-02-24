@@ -4,14 +4,21 @@ on:
     branches:
     - "*"
 jobs:
-  templates_jobs:
-    name: templates_jobs
-    uses: begonaguereca/importer/.github/workflows/templates_jobs.yml@main
-  alt:
+  first:
     runs-on: ubuntu-latest
     steps:
     - name: checkout
       uses: actions/checkout@v3.3.0
-    - run: echo This script runs before the template steps.
+    - run: echo We are now calling template_jobs
+
+  templates_jobs:
+    name: templates_jobs
+    uses: begonaguereca/importer/.github/workflows/templates_jobs.yml@main
+
+  third:
+    runs-on: ubuntu-latest
+    steps:
+    - name: checkout
+      uses: actions/checkout@v3.3.0
+    - run: echo We are now calling the template steps
     - uses: begonaguereca/importer/.github/actions/templates_step@main
-    - run: echo This step runs after the template steps.
