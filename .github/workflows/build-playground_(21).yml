@@ -12,6 +12,6 @@ jobs:
     steps:
     - name: checkout
       uses: actions/checkout@v3.3.0
-    - run: echo This script runs before the template's steps.
+    - run: echo This script runs before the template steps.
     - uses: begonaguereca/importer/.github/actions/templates_step@main
-    - run: echo This step runs after the template's steps.
+    - run: echo This step runs after the template steps.
