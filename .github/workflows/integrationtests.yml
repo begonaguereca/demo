@@ -1,0 +1,174 @@
+name: foo/integrationtests
+on:
+#   # The shortest interval you can run scheduled workflows is once every 5 minutes.
+#   period: '130'
+#   # The shortest interval you can run scheduled workflows is once every 5 minutes.
+#   period: '150'
+  schedule:
+  - cron: 15 10 * * *
+  - cron: 10,44 14 * 3 WED
+  push:
+jobs:
+  Build-binaries-Build-binaries:
+    runs-on:
+      - self-hosted
+      - hasDocker
+    container:
+      image: ubuntu
+      volumes:
+      - "${{ env.working_directory }}:${{ env.working_directory }}"
+      - "${{ env.tmp_directory }}:${{ env.tmp_directory }}"
+    steps:
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+    - run: |-
+        echo 'echo success' > script.sh
+        echo 'success' > output.log
+#     # Only 'Local' scope is supported for inject-variables. The following snippet can be uncommented and used but will be scoped to the current job.
+#     - run: |-
+#         while IFS= read -r line || [[ -n "$line" ]]; do
+#           if [[ -n "$line" ]]; then
+#             key=$(echo "myspace_$line" | cut -d= -f1)
+#             value=$(echo "$line" | cut -d= -f2)
+#             echo "$key=$value" >> "$GITHUB_ENV"
+#           fi
+#         done < folder\file.txt
+#       shell: bash
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COMPL_Binaries
+        path: script.sh
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COMPL_Logs
+        path: "**/*.log"
+        if-no-files-found: ignore
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COMPL_All
+        path: "**/*"
+        if-no-files-found: error
+  Run-tests-Integration-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: postgres
+      volumes:
+      - "${{ env.working_directory }}:${{ env.working_directory }}"
+      - "${{ env.tmp_directory }}:${{ env.tmp_directory }}"
+    needs:
+    - Build-binaries-Build-binaries
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_All
+    - uses: actions/checkout@v3.5.0
+    - run: touch report.xml
+    # This action will fail to process `testng-results.xml`, but will successfully handle TestNG test suite file(s), e.g. `**/TEST-*.xml`.
+    # Ensure the path to your test suite files(s) is correct. If you wish to use the original path, set `report_path` to "**/testng-results.xml".
+    - name: Publish TestNG results
+      uses: scacap/action-surefire-report@v1.7.0
+      with:
+        report_paths: UPDATE_ME
+      if: always()
+#     # This item has no matching transformer
+#     - test-parser/type/mocha:
+#         test-parser:
+#           type: mocha
+#           ignore-time: false
+#           test-results:
+#           - mocha-1.json
+#           - mocha-2.json
+#       if: always()
+    - name: Publish MS Test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: always()
+      with:
+        files: |-
+          tests1\results.trx
+          tests2\results.trx
+    - run: |-
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          if [[ -n "$line" ]]; then
+            key=$(echo "inject_$line" | cut -d= -f1)
+            value=$(echo "$line" | cut -d= -f2)
+            echo "$key=$value" >> "$GITHUB_ENV"
+          fi
+        done < tests.txt
+      shell: bash
+      if: always()
+  Run-tests-Unit-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    needs:
+    - Build-binaries-Build-binaries
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+    - run: touch report.xml
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: always()
+      with:
+        junit_files: report.xml
+  Deploy-Deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    environment:
+      name: approval_required
+    needs:
+    - Build-binaries-Build-binaries
+    - Run-tests-Integration-tests
+    - Run-tests-Unit-tests
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+  Cleanup-Cleanup:
+    runs-on: ubuntu-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    if: always()
+    needs:
+    - Build-binaries-Build-binaries
+    - Run-tests-Integration-tests
+    - Run-tests-Unit-tests
+    - Deploy-Deploy
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COMPL_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
