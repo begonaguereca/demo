@@ -1,27 +1,196 @@
-name: build-playground/demo-build-pipeline
+name: branches-deployment-pipes
 on:
   push:
-    branches:
-    - main
+    branches: deployment-pipes*
+env:
+  AWS_SECRET_SERVERLESS_DEPLOY_KEY: "${{ secrets.AWS_SECRET_SERVERLESS_DEPLOY_KEY }}"
+  AWS_ACCESS_KEY_ID: FOOBAR
+  AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+  important_workspace_env: "${{ secrets.important_workspace_env }}"
+  queen: workspace
+  king: "${{ secrets.king }}"
 jobs:
-  Job:
-    runs-on:
-      - mechamachine
-      - X86
+  step_job_1:
+    runs-on: ubuntu-latest
     steps:
-    - name: checkout
-      uses: actions/checkout@v2
-    - name: Install Go
-      uses: actions/setup-go@v2
+    - uses: actions/checkout@v4.0.0
+    - uses: aws-actions/configure-aws-credentials@v3.0.1
       with:
-        go-version: '1.10'
-    - name: Login to Docker Hub
-      uses: docker/login-action@v1
+        aws-access-key-id: "${{ env.AWS_ACCESS_KEY_ID }}"
+        aws-secret-access-key: "${{ env.AWS_SECRET_ACCESS_KEY }}"
+        aws-region: ap-southeast-2
+    - uses: azure/login@v1.4.6
       with:
-        username: "${{ env.branch == 'refs/heads/main' || startsWith(env.branch, 'refs/heads/releases/') }}"
-        password: "${{ secrets.MY_OWN_DOCKER_HUB_ACCESS_TOKEN }}"
-    - name: Build and push
-      uses: docker/build-push-action@v2
+        creds: "${{ secrets.AZURE_CREDENTIALS }}"
+    - uses: azure/functions-action@v1.5.0
       with:
-        file: "**/Dockerfile"
-        push: true
+        app-name: my-function
+        package: application.zip
+    - uses: azure/container-apps-deploy-action@v1
+      with:
+        yamlConfigPath: config.yaml
+        containerAppName: my-container
+        resourceGroup: my-group
+    - name: Deploy to Azure Web Apps Containers
+      run: |
+        az webapp config container set \
+        --resource-group $AZURE_RESOURCE_GROUP \
+        --name $AZURE_APP_NAME \
+        --docker-custom-image-name $DOCKER_CUSTOM_IMAGE_NAME \
+        --docker-registry-server-url $DOCKER_REGISTRY_SERVER_URL \
+        --docker-registry-server-user $DOCKER_REGISTRY_SERVER_USER \
+        --docker-registry-server-password $DOCKER_REGISTRY_SERVER_PASSWORD \
+        --slot staging \
+        --debug
+        WEBAPP_URL=$(az webapp deployment list-publishing-profiles -n $AZURE_APP_NAME -g $AZURE_RESOURCE_GROUP --query '[0].destinationAppUrl' -o tsv)
+        echo "Webapp URL: $WEBAPP_URL"
+    - name: Create Azure Resource Group
+      uses: azure/cli@v1.0.7
+      with:
+        inlineScript: |
+          #!/bin/bash
+          az group create --name "arm-testing" --location "EastUS"
+          echo "Azure resource group created"
+    - name: Deploy Azure ARM Template
+      uses: azure/arm-deploy@v1.0.9
+      with:
+        scope: resourcegroup
+        deploymentName: my-deployment
+        deploymentMode: Complete
+        template: "./azuredeploy.json"
+        resourceGroupName: arm-testing
+        failOnStdErr: 'true'
+        additionalArguments: "--parameters VnetName=MyVnet CostCenterIO=123 OwnerName=Vladimir --no-wait --rollback-on-error"
+    - uses: AkhileshNS/heroku-deploy@v3.12.14
+      with:
+        heroku_api_key: "${{ secrets.HEROKU_API_KEY }}"
+        heroku_app_name: "$HEROKU_APP_NAME"
+        heroku_email: UPDATE_ME
+    - uses: Burnett01/rsync-deployments@6.0.0
+      with:
+        switches: "-rp --delete"
+        remote_host: 127.0.0.1
+        remote_user: ec2-user
+        remote_path: "/var/www/build/"
+        path: build
+        remote_port: '8022'
+        remote_key: "${{ secrets.SSH_KEY }}"
+    - name: Execute pre-execution script
+      shell: sh
+      run: "./run-first.sh"
+    - uses: serverless/github-action@v3.2.0
+      env:
+        AWS_ACCESS_KEY_ID: my-access-key
+        AWS_SECRET_ACCESS_KEY: "${{ env.AWS_SECRET_SERVERLESS_DEPLOY_KEY }}"
+      with:
+        args: serverless deploy -c my-custom-config.yml
+    - name: FTP Deploy
+      env:
+        USER: my-ftp-user
+        PASSWORD: "$FTP_PASSWORD"
+        SERVER: 127.0.0.1
+        REMOTE_PATH: "/tmp/my-remote-directory"
+        LOCAL_PATH: "${{ github.workspace }}"
+        SET_ARGS: ftp:ssl-allow no
+        EXTRA_ARGS: "--delete-first"
+      run: lftp -u $USER,$PASSWORD -e "set ${SET_ARGS}; mirror ${EXTRA_ARGS} -R ${LOCAL_PATH} ${REMOTE_PATH};quit" $SERVER
+    # Ensure parameter if_key_exists is set correctly
+    - name: Install SSH key
+      uses: shimataro/ssh-key-action@v2.5.0
+      with:
+        key: "${{ secrets.SFTP_DEPLOY_SSH_KEY }}"
+        name: id_rsa
+        known_hosts: "${{ secrets.SFTP_DEPLOY_KNOWN_HOSTS }}"
+        if_key_exists: fail
+    - name: Deploy via SFTP
+      run: echo "mput build" | sftp -b - -rp -P 22324 ec2-user@127.0.0.1:/var/www/build/
+    - uses: aws-actions/configure-aws-credentials@v3.0.1
+      with:
+        aws-access-key-id: my_access_key
+        aws-secret-access-key: "${{ env.AWS_SECRET_SERVERLESS_DEPLOY_KEY }}"
+        aws-region: us-east-1
+    - name: Invalidate Cloudfront Distribution
+      run: aws cloudfront create-invalidation --distribution-id dist_id --paths index.html "fun/*"
+    - uses: aws-actions/configure-aws-credentials@v3.0.1
+      with:
+        aws-access-key-id: "${{ env.AWS_ACCESS_KEY_ID }}"
+        aws-secret-access-key: "${{ env.AWS_SECRET_ACCESS_KEY }}"
+        aws-region: us-east-1
+    - id: render-task-definition-my-ecs-service-my-ecs-cluster
+      uses: aws-actions/amazon-ecs-render-task-definition@v1.1.3
+      with:
+        task-definition: task-definition.json
+        container-name: UPDATE_ME
+        image: UPDATE_ME
+    - uses: aws-actions/amazon-ecs-deploy-task-definition@v1.4.11
+      with:
+        task-definition: "${{ steps.render-task-definition-my-ecs-service-my-ecs-cluster.outputs.task-definition }}"
+        service: my-ecs-service
+        cluster: my-ecs-cluster
+        force-new-deployment: 'false'
+    - uses: aws-actions/amazon-ecr-login@v1.7.0
+      id: login-ecr
+    - uses: aws-actions/configure-aws-credentials@v3.0.1
+      with:
+        aws-access-key-id: "${{ env.AWS_ACCESS_KEY_ID }}"
+        aws-secret-access-key: "${{ env.AWS_SECRET_ACCESS_KEY }}"
+        aws-region: us-east-1
+    - name: Push image to Amazon ECR
+      run: |-
+        docker tag  registry-alias/my-docker-image:latest registry-alias/registry-alias/my-docker-image:latest
+        docker push registry-alias/registry-alias/my-docker-image:latest
+    - uses: aws-actions/setup-sam@v2
+    - uses: aws-actions/configure-aws-credentials@v3.0.1
+      with:
+        aws-access-key-id: "${{ env.AWS_ACCESS_KEY_ID }}"
+        aws-secret-access-key: "${{ env.AWS_SECRET_ACCESS_KEY }}"
+    - run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset --debug
+    - name: Uploading to S3
+      run: aws s3 cp myapp.zip s3://my-application-codedeploy-deployment/my-application-${{ github.run_number }}-${{ github.sha }}
+    - name: Creating new CodeDeploy Application Revision
+      run: |
+        aws deploy register-application-revision \
+        --application-name my-application \
+        --revision revisionType=s3,s3Location={bucket=my-application-codedeploy-deployment,key=my-application-codedeploy-deployment/my-application-${{ github.run_number }}-${{ github.sha }},bundleType=zip}"
+    - name: Check revision exists
+      run: aws deploy get-application-revision --application-name my-application --revision revisionType=s3,s3Location={bucket=my-application-codedeploy-deployment,key=my-application-codedeploy-deployment/my-application-${{ github.run_number }}-${{ github.sha }},bundleType=zip}
+    - name: Deploy app from revision
+      run: |
+        aws deploy create-deployment \
+        --application-name my-application \
+        --deployment-group-name my-deployment-group \
+        --revision revisionType=s3,s3Location={bucket=my-application-codedeploy-deployment,key=my-application-codedeploy-deployment/my-application-${{ github.run_number }}-${{ github.sha }},bundleType=zip} \
+        --ignore-application-stop-failures false
+    - uses: appleboy/ssh-action@v1.0.0
+      with:
+        username: ec2-user
+        host: 127.0.0.1
+        script: echo $HOSTNAME
+    - name: SonarCloud Scan
+      uses: sonarsource/sonarcloud-github-action@v2.0.0
+      env:
+        SONAR_TOKEN: "${{ secrets.SONAR_TOKEN }}"
+        GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        SONARCLOUD_URL: "${{ secrets.SONAR_URL }}"
+      with:
+        args: |-
+          #WARNING: projectKey is a required field, ensure it is configured here or in your project file
+          -Dsonar.projectKey='<<INSERT KEY HERE>>'/`
+          -Dsonar.host.url='${{ secrets.SONAR_URL }}'/`
+          -Dsonar.login=${{ env.SONAR_TOKEN }}/`
+          -Dsonar.projectDescription=\"Project with sonarcloud-scan pipe\" -Dsonar.eslint.reportPaths=\"report.json\"
+#     # This item has no matching transformer
+#     - identifier: sonarsource/sonarqube-scan:2.0.1
+#       variables:
+#         SONAR_HOST_URL: "${SONAR_HOST_URL}"
+#         SONAR_TOKEN: "${SONAR_TOKEN}"
+#         EXTRA_ARGS: -Dsonar.eslint.reportPaths=\"report.json\"
+#         SONAR_SCANNER_OPTS: "-Xmx512m"
+#         DEBUG: 'true'
+#     # This item has no matching transformer
+#     - identifier: sonarsource/sonarqube-quality-gate:1.1.0
+#       variables:
+#         SONAR_TOKEN: "${SONAR_TOKEN}"
+#     # This item has no matching transformer
+#     - identifier: jfrog/jfrog-setup-cli:2.0.0
+#       variables: {}
