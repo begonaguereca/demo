@@ -1,0 +1,408 @@
+name: integrationtests/complexbuild
+on:
+#   # The shortest interval you can run scheduled workflows is once every 5 minutes.
+#   period: '130'
+#   # The shortest interval you can run scheduled workflows is once every 5 minutes.
+#   period: '150'
+  schedule:
+  - cron: 15 10 * * *
+  - cron: 10,44 14 * 3 WED
+  push:
+env:
+  quickCompileMavenGoals_experimental: '1'
+  password: "${{ secrets.password }}"
+  username: admin
+jobs:
+  Build-binaries-Build-binaries:
+    runs-on:
+      - self-hosted
+      - hasDocker
+    container:
+      image: ubuntu
+      volumes:
+      - "${{ env.working_directory }}:${{ env.working_directory }}"
+      - "${{ env.tmp_directory }}:${{ env.tmp_directory }}"
+    steps:
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+    - run: |-
+        echo 'echo success' > script.sh
+        echo 'success' > output.log
+#     # Only 'Local' scope is supported for inject-variables. The following snippet can be uncommented and used but will be scoped to the current job.
+#     - run: |-
+#         while IFS= read -r line || [[ -n "$line" ]]; do
+#           if [[ -n "$line" ]]; then
+#             key=$(echo "myspace_$line" | cut -d= -f1)
+#             value=$(echo "$line" | cut -d= -f2)
+#             echo "$key=$value" >> "$GITHUB_ENV"
+#           fi
+#         done < folder\file.txt
+#       shell: bash
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COM_Binaries
+        path: script.sh
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COM_Logs
+        path: "**/*.log"
+        if-no-files-found: ignore
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COM_All
+        path: "**/*"
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v3.1.1
+      with:
+        name: IN-COM_my-artifacts
+        path: "**/**/.zip"
+        if-no-files-found: error
+  Git-Fun-All-The-Git:
+    runs-on: ubuntu-latest
+    needs:
+    - Build-binaries-Build-binaries
+    steps:
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+    - run: |-
+        echo $RANDOM > random.txt
+        cat random.txt
+    # stop-job with success isn't natively supported in GitHub Actions.
+    # To support this behavior, the steps after this task will use
+    # this task's condition(s) to conditionally skip them.
+    # See https://github.com/actions/runner/issues/662
+    - id: stop-job-3666
+      name: Skip remaining tasks and exit with success
+      run: stop=${{ env.myvar == 'foo' }} >> $GITHUB_OUTPUT && exit 0
+      if: env.myvar == 'foo'
+    # Ensure parameter if_key_exists is set correctly
+    - name: Install SSH key
+      uses: shimataro/ssh-key-action@v2.5.0
+      with:
+        key: "${{ secrets.BAMBOO_SSH_KEY }}"
+        name: id_rsa
+        known_hosts: "${{ secrets.BAMBOO_KNOWN_HOSTS }}"
+        if_key_exists: fail
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: Install sshpass
+      run: sudo apt-get install -y sshpass
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: SSH 20.230.215.196
+      run: |-
+        sshpass -p ${{ secrets.BAMBOO_SSH_PASSWORD }} ssh -o StrictHostKeyChecking=no -T bamboo@20.230.215.196 -i id_rsa << EOF
+          ls -alh
+          echo "hi"
+        EOF
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: SSH github.com
+      run: |-
+        sshpass -p ${{ secrets.BAMBOO_SSH_PASSWORD }} ssh -o StrictHostKeyChecking=no -T bamboo@github.com -i id_rsa << EOF
+          ls -alh
+          echo "hi"
+        EOF
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: Commit a silly file
+      run: |-
+        git add .
+        git commit -m "Bamboo: ${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}"
+        git push origin HEAD
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: Push it!
+      run: git push origin HEAD
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - run: git status
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: Tag Repository ${{ github.repository }}
+      run: |
+        git tag ${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}
+        git push origin ${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+    - name: Branch it!
+      run: |
+        git checkout -b branch_${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}
+        git push --set-upstream origin branch_${{ github.workflow }}-${{ github.job }}-${{ github.run_id }}
+      if: "${{ steps.stop-job-3666.outputs.stop == 'false' }}"
+  Run-tests-Integration-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: postgres
+      volumes:
+      - "${{ env.working_directory }}:${{ env.working_directory }}"
+      - "${{ env.tmp_directory }}:${{ env.tmp_directory }}"
+    needs:
+    - Build-binaries-Build-binaries
+    - Git-Fun-All-The-Git
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_All
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_my-artifacts
+        path: "./test"
+    - uses: actions/checkout@v3.5.0
+    - run: touch report.xml
+    # This action will fail to process `testng-results.xml`, but will successfully handle TestNG test suite file(s), e.g. `**/TEST-*.xml`.
+    # Ensure the path to your test suite files(s) is correct. If you wish to use the original path, set `report_path` to "**/testng-results.xml".
+    - name: Publish TestNG results
+      uses: scacap/action-surefire-report@v1.7.0
+      with:
+        report_paths: UPDATE_ME
+      if: always()
+    - name: Publish Mocha test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: env.test != '' && always()
+      with:
+        files: |-
+          mocha-1.json
+          mocha-2.json
+    - name: Publish MS Test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: env.test != '' && always()
+      with:
+        files: |-
+          tests1\results.trx
+          tests2\results.trx
+    - run: |-
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          if [[ -n "$line" ]]; then
+            key=$(echo "inject_$line" | cut -d= -f1)
+            value=$(echo "$line" | cut -d= -f2)
+            echo "$key=$value" >> "$GITHUB_ENV"
+          fi
+        done < tests.txt
+      shell: bash
+      if: always()
+  Run-tests-Unit-tests:
+    runs-on: windows-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    needs:
+    - Build-binaries-Build-binaries
+    - Git-Fun-All-The-Git
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+    - run: touch report.xml
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: env.test != '' && always()
+      with:
+        junit_files: "**/test-reports/*.xml"
+    # The node-version input is optional. If not supplied, the node version from PATH will be used.
+    # However, it is recommended to always specify the Node.js version and not rely on the system one.
+    - uses: actions/setup-node@v3.6.0
+      with:
+        node-version: UPDATE_ME
+        cache: npm
+      if: env.FOO != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample NPM task
+      run: npm version
+      working-directory: src
+      if: env.FOO != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample Nunit parser task
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: env.ABC != '' && always()
+      with:
+        nunit_files: "**/test-reports/*.xml"
+    - name: Sample command task
+      run: foo --help
+      working-directory: tmp
+      if: env.ABC != ''
+    - name: Setup Java 11
+      uses: actions/setup-java@v3.11.0
+      with:
+        distribution: zulu
+        java-version: '11'
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample Grails task
+      working-directory: tmp
+      run: |-
+        grails clean --non-interactive
+        grails test-app --non-interactive
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: env.ABC != '' && always()
+      with:
+        junit_files: |-
+          **/*reports/*.xml
+          **/foo/*.xml
+      env:
+        BAR: bar
+        BAZ: baz
+    # The node-version input is optional. If not supplied, the node version from PATH will be used.
+    # However, it is recommended to always specify the Node.js version and not rely on the system one.
+    - uses: actions/setup-node@v3.6.0
+      with:
+        node-version: UPDATE_ME
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample Bower task
+      run: |-
+        npm install -g bower
+        bower install
+      working-directory: tmp
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    # The node-version input is optional. If not supplied, the node version from PATH will be used.
+    # However, it is recommended to always specify the Node.js version and not rely on the system one.
+    - uses: actions/setup-node@v3.6.0
+      with:
+        node-version: UPDATE_ME
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample Gulp task
+      run: |-
+        npm install --save-dev gulp
+        gulp clean build --gulpfile scratch/gulp.js
+      working-directory: tmp
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - uses: ruby/setup-ruby@v1.148.0
+      with:
+        bundler-cache: true
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Automation with fastlane
+      run: bundle exec fastlane deploy submit:false build_number:24
+      working-directory: tmp
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - uses: seanmiddleditch/gha-setup-vsdevenv@v4
+      with:
+        arch: x86
+    - name: Build VS Task
+      run: devenv x86 ActionsImporter.sln /p:Configuration=Release /p:platform="Any CPU"
+    # The node-version input is optional. If not supplied, the node version from PATH will be used.
+    # However, it is recommended to always specify the Node.js version and not rely on the system one.
+    - uses: actions/setup-node@v3.6.0
+      with:
+        node-version: UPDATE_ME
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+    - name: Sample Grunt task
+      run: |-
+        npm install --save-dep grunt
+        grunt css js --gruntfile scratch/Gruntfile.js
+      working-directory: tmp
+      if: env.ABC != ''
+      env:
+        BAR: bar
+        BAZ: baz
+#     # This item has no matching transformer
+#     - any-task/plugin-key/com.atlassian.bamboo.plugins.xcode.bamboo-xcode-plugin:unlockkeychain:
+#         any-task:
+#           plugin-key: com.atlassian.bamboo.plugins.xcode.bamboo-xcode-plugin:unlockkeychain
+#           configuration:
+#             password: foo
+#             keychain: login
+#             setAsDefaultKeychain: 'true'
+#           conditions:
+#           - variable:
+#               exists: FOO
+#           description: Sample unlock keychain task
+#     # This item has no matching transformer
+#     - any-task/plugin-key/com.atlassian.bamboo.plugin.dotnet:nunitRunner:
+#         any-task:
+#           plugin-key: com.atlassian.bamboo.plugin.dotnet:nunitRunner
+#           configuration:
+#             nunitResultsFile: TestResult.xml
+#             label: system.builder.nunit3.nuit
+#             nunitTestFiles: foo.dll
+#           description: NUnit Runner
+    - name: Publish test results
+      uses: EnricoMi/publish-unit-test-result-action@v2.7.0
+      if: always()
+      with:
+        junit_files: report.xml
+  Deploy-Deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    environment:
+      name: approval_required
+    needs:
+    - Build-binaries-Build-binaries
+    - Git-Fun-All-The-Git
+    - Run-tests-Integration-tests
+    - Run-tests-Unit-tests
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
+  Cleanup-Cleanup:
+    runs-on: ubuntu-latest
+    container:
+      image: oracle
+      volumes:
+      - "/home/user:/home/user"
+      - "/opt:/opt"
+    if: always()
+    needs:
+    - Build-binaries-Build-binaries
+    - Git-Fun-All-The-Git
+    - Run-tests-Integration-tests
+    - Run-tests-Unit-tests
+    - Deploy-Deploy
+    steps:
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_Binaries
+    - uses: actions/download-artifact@v3.0.1
+      with:
+        name: IN-COM_All
+    - uses: actions/checkout@v3.5.0
+      with:
+        clean: false
